@@ -1,0 +1,209 @@
+from pathlib import Path
+import glob
+
+# Load config parameters
+input_dir = Path(config['input_dir'])
+Index = Path(config['Index'])
+DS = config.get("DS", None)  # Get DS from config, default to None if not provided
+GTF = Path(config['GTF'])
+output_dir = Path(config['output_dir'])
+log_dir = Path(config['log_dir'])
+Memory_Max = config.get("Memory_Max", 20000000000)  # Default to 20GB if not provided
+
+# Update the SAMPLES extraction pattern to match the desired input format
+SAMPLES = [Path(x).stem.split("_R1")[0] for x in glob.glob(f"{input_dir}/*_R1.fastq.gz")]
+
+# Ensure the pipeline outputs the required reports and files.
+rule all:
+    input:
+        expand(f"{output_dir}/Filtered/{{sample}}_R1_filtered.fastq.gz", sample=SAMPLES),
+        f"{output_dir}/GeneCounts.tsv",
+        f"{output_dir}/StarCombinedLogFinal.txt",
+        f"{input_dir}/multiqc"  # MultiQC report output in the main input directory
+
+# Trimming step (with fastp)
+rule Trim_reads:
+    input:
+        R1=f"{input_dir}/{{sample}}_R1.fastq.gz",
+        R2=f"{input_dir}/{{sample}}_R2.fastq.gz"
+    output:
+        R1_out=f"{output_dir}/Filtered/{{sample}}_R1_filtered.fastq.gz",
+        R2_out=f"{output_dir}/Filtered/{{sample}}_R2_filtered.fastq.gz",
+        html=f"{output_dir}/Filtered/{{sample}}_fastp.html",
+        json=f"{output_dir}/Filtered/{{sample}}_fastp.json"
+    shell:
+        """
+        fastp --in1 {input.R1} --in2 {input.R2} \
+              --out1 {output.R1_out} --out2 {output.R2_out} \
+              --html {output.html} --json {output.json}
+        """
+
+# FastQC after trimming
+rule QC_trimmed_reads:
+    input:
+        R1=f"{output_dir}/Filtered/{{sample}}_R1_filtered.fastq.gz",
+        R2=f"{output_dir}/Filtered/{{sample}}_R2_filtered.fastq.gz"
+    output:
+        html=f"{output_dir}/Filtered/{{sample}}_fastqc_trimmed.html",
+        zip=f"{output_dir}/Filtered/{{sample}}_fastqc_trimmed.zip"
+    shell:
+        """
+        fastqc {input.R1} {input.R2} --outdir={output_dir}/Filtered/
+        """
+
+# Downsampling step (only if DS is defined in the config)
+rule Downsampling:
+    input:
+        f"{output_dir}/Filtered/{{sample}}_R1_filtered.fastq.gz",
+        f"{output_dir}/Filtered/{{sample}}_R2_filtered.fastq.gz"
+    output:
+        R1_ds=f"{output_dir}/Filtered/ds/{{sample}}_R1_ds.fastq.gz",
+        R2_ds=f"{output_dir}/Filtered/ds/{{sample}}_R2_ds.fastq.gz"
+    run:
+        if DS:
+            shell("""
+                seqtk sample -s100 {input[0]} {DS}| gzip > {output.R1_ds}
+                seqtk sample -s100 {input[1]} {DS}| gzip > {output.R2_ds}
+            """)
+        else:
+            print("No downsampling (DS value) provided in the config. Skipping...")
+
+# STAR alignment with configurable --limitBAMsortRAM from config
+rule STAR_Align:
+    input:
+        R1=f"{output_dir}/Filtered/ds/{{sample}}_R1_ds.fastq.gz",
+        R2=f"{output_dir}/Filtered/ds/{{sample}}_R2_ds.fastq.gz"
+    output:
+        bam=f"{output_dir}/Filtered/ds/STAR/{{sample}}_Aligned.sortedByCoord.out.bam",
+	log_final=f"{output_dir}/Filtered/ds/STAR/{{sample}}_Log.final.out"
+    threads: 20
+    shell:
+        """
+        STAR --runThreadN {threads} \
+             --genomeDir {Index} \
+             --readFilesIn {input.R1} {input.R2} \
+             --readFilesCommand zcat \
+             --outFileNamePrefix {output_dir}/Filtered/ds/STAR/{wildcards.sample}_ \
+             --outSAMtype BAM SortedByCoordinate \
+             --limitBAMsortRAM {Memory_Max}  # Use the Memory_Max from config
+        """
+
+# Post-alignment: Index BAM files and extract primary alignments
+rule PostAlignmentProcessing:
+    input:
+        bam=f"{output_dir}/Filtered/ds/STAR/{{sample}}_Aligned.sortedByCoord.out.bam"
+    output:
+        primary_bam=f"{output_dir}/Primary-alignments/{{sample}}_primary.bam",
+        indexed_bam=f"{output_dir}/Primary-alignments/{{sample}}_primary.bam.bai"
+    threads: 8
+    shell:
+        """
+        mkdir -p {output_dir}/Primary-alignments
+
+        # Extract primary alignments
+        samtools view -@ {threads} -b -f 3 -F 2816 {input.bam} > {output.primary_bam}
+
+        # Index primary alignments
+        samtools index {output.primary_bam}
+        """
+
+# Generate read counts using bedtools
+rule BedtoolsCoverage:
+    input:
+        bam=f"{output_dir}/Primary-alignments/{{sample}}_primary.bam"
+    output:
+        coverage=f"{output_dir}/Read-counts/{{sample}}_cov.all"
+    shell:
+        """
+        bedtools coverage -F 0.1 -b {input.bam} -a {GTF} > {output.coverage}
+        """
+
+# Collate read counts
+rule CollateReadCounts:
+    input:
+        expand(f"{output_dir}/Read-counts/{{sample}}_cov.all", sample=SAMPLES)
+    output:
+        counts=f"{output_dir}/GeneCounts.tsv"
+    shell:
+        """
+        cd {output_dir}/Read-counts
+
+        # Step 1: Create a .column.txt file for each sample based on their respective .bam files
+        for file in *_cov.all; do
+            sample_name="${{file%_cov.all}}"
+            echo "${{sample_name}}" > "${{sample_name}}.column.txt"
+            cut -f10 "${{sample_name}}_cov.all" >> "${{sample_name}}.column.txt"
+        done
+
+        # Step 2: Generate the header row with chromosome, start, stop, gene_info columns
+        echo -e "chromosome\tstart\tstop\tgene_info" > rows
+
+        # Step 3: Get chromosome, start, stop, and gene_info columns from a representative .all file
+        # using the first .all file available in the directory
+        representative_file=$(ls *_cov.all | head -n 1)
+        cut -f1,4,5,9 "$representative_file" >> rows
+
+        # Step 4: Merge all columns into a single GeneCounts.tsv file
+        paste -d "\t" rows *.column.txt > GeneCounts.tsv
+
+        # Step 5: Move the output to the expected location
+        mv GeneCounts.tsv {output.counts}
+
+        # Step 6: Cleanup temporary files
+        rm rows *.column.txt
+        """
+
+
+# Generate final report from STAR alignment logs
+
+rule STAR_report:
+    input:
+        expand(f"{output_dir}/Filtered/ds/STAR/{{sample}}_Log.final.out", sample=SAMPLES)
+    output:
+        log=f"{output_dir}/StarCombinedLogFinal.txt"
+    shell:
+        """
+        # Move into the directory with the STAR log files
+        cd {output_dir}/Filtered/ds/STAR
+
+	echo -e "Sample" >> samplename.txt
+	echo -e "Number of input reads" >> inputReads.txt
+	echo -e "Average input read length" >> readlength.txt
+	echo -e "% Uniquely mapped reads" >> unique.txt
+	echo -e "Average mapped length" >> mapLen.txt
+	echo -e "% of reads mapped to multiple loci" >> loci.txt
+	echo -e "% of reads mapped to too many loci" >> 2loci.txt
+	echo -e "% reads unmapped by mismatches" >> missMatch.txt
+	echo -e "% reads unmapped by length" >> len.txt
+	echo -e "% reads unmapped by other" >> other.txt
+
+	for file in *Log.final.out; do
+		echo "${{file%_Log.final.out}}" >> samplename.txt
+		grep "Number of input reads" $file | cut -f 2 >> inputReads.txt
+		grep "Average input read length" $file | cut -f 2 >> readlength.txt
+		grep "Uniquely mapped reads %" $file | cut -f 2 >> unique.txt
+		grep "Average mapped length" $file | cut -f 2 >> mapLen.txt
+		grep "% of reads mapped to multiple loci" $file | cut -f 2 >> loci.txt
+		grep "% of reads mapped to too many loci" $file | cut -f 2 >> 2loci.txt
+		grep "% of reads unmapped: too many mismatches" $file | cut -f 2 >> missMatch.txt
+		grep "% of reads unmapped: too short" $file | cut -f 2 >> len.txt
+		grep "% of reads unmapped: other" $file | cut -f 2 >> other.txt
+	done
+
+	paste samplename.txt inputReads.txt readlength.txt unique.txt mapLen.txt loci.txt 2loci.txt missMatch.txt len.txt other.txt > {output.log}
+	rm samplename.txt inputReads.txt readlength.txt unique.txt mapLen.txt loci.txt 2loci.txt missMatch.txt len.txt other.txt
+
+	"""
+
+
+# MultiQC aggregation step in the input directory
+rule multiqc:
+    input:
+        logs=f"{output_dir}/StarCombinedLogFinal.txt"
+    output:
+        directory(f'{input_dir}/multiqc')  # MultiQC report saved to the input directory
+    shell:
+        """
+        multiqc {output_dir} -o {input_dir}/multiqc
+        """
+

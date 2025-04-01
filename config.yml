@@ -1,0 +1,8 @@
+input_dir: "/data/projects/test/sra/all-fastqs/snakemake-testing"
+Index: "/references/hg38/refseq_star"
+DS: 3000000  # Downsampling value, rule is skipped if no value provided
+GTF: "/references/hg38/refseq_ptn_coding.gtf"
+output_dir: "/data/projects/test/sra/all-fastqs/snakemake-testing/output_dir"
+log_dir: "/data/projects/test/sra/all-fastqs/snakemake-testing/logs"
+Memory_Max: 20000000000  # Default RAM for STAR BAM sorting
+
