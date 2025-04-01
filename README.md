@@ -115,11 +115,11 @@ ___________________________________________________________
 
 This pipeline is currently in further development to integrate R scripts for deseq2 analysis of the human genes and will have a subsequent shell script added to identify viral reads. For now it is solely focused on human alignments and producing read counts from an annotataed GTF file in an automated and scalable fashion. Further improvements are in the works and can be requested directly.
 
- **Downsampling via seqtk is optional and controlled via the DS parameter.
+ . Downsampling via seqtk is optional and controlled via the DS parameter.
 
- **STAR indexing must be done in advance.
+ . STAR indexing must be done in advance.
 
- **The pipeline assumes paired-end data and GTF annotation format compatible with featureCounts.
+ . The pipeline assumes paired-end data and GTF annotation format compatible with featureCounts.
 
 ___________________________________________________________
 
