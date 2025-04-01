@@ -9,13 +9,13 @@ _______________________________________________________
 
 The Snakemake workflow automates :
 
-1. **Trimming of reads using fastp (Version: 0.23.2)
-2. **QC of reads using fastqc (Version: 0.11.9)
-3. **(Optional) Down sampling of reads using Seqtk (Version: 1.3)
-4. **Alignments of reads using STAR (Version: 2.7.9a)
-5. **Sorting and indexing of alignments using samtools (Version: 1.12)
-6. **Generating selective coverage using bedtools (Version: 2.30.0)
-7. **Generating summary report using multiqc (Version: 1.12)
+1. Trimming of reads using fastp (Version: 0.23.2)
+2. QC of reads using fastqc (Version: 0.11.9)
+3. (Optional) Down sampling of reads using Seqtk (Version: 1.3)
+4. Alignments of reads using STAR (Version: 2.7.9a)
+5. Sorting and indexing of alignments using samtools (Version: 1.12)
+6. Generating selective coverage using bedtools (Version: 2.30.0)
+7. Generating summary report using multiqc (Version: 1.12)
 _______________________________________________________
 ## Table of Contents
 - [Installation](#installation)
@@ -105,10 +105,10 @@ _________________________________________________________
 
 The pipeline generates:
 
-1. **Quality reports (fastqc, multiqc)
-2. **Aligned and sorted BAM files
-3. **Count matrices for Human Genes
-5. **Logs for each step
+1. Quality reports (fastqc, multiqc)
+2. Aligned and sorted BAM files
+3. Count matrices for Human Genes
+5. Logs for each step
 
 ___________________________________________________________
 ## Notes
