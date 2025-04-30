@@ -1,6 +1,6 @@
 # Nasopharyngeal Proteomics Analysis Pipeline
 
-This repository contains individual shell scripts and a scalable automated Snakemake-based bioinformatics pipeline for analyzing nasopharyngeal samples using STAR for detecting viral pathogens and generating human alignments for performing differential expression analysis on protein expression data. The goal is to identify % of reads aligned to SARS-Cov-2 and subsiquently any significant proteomic changes between two experimental conditions.
+This repository contains individual shell scripts and a scalable automated Snakemake-based bioinformatics pipeline for analyzing nasopharyngeal samples using STAR for detecting viral pathogens and generating human alignments for performing differential expression analysis on protein expression data. The goal is to identify % of reads aligned to SARS-Cov-2 and subsiquently identify any significant proteomic changes between two experimental conditions.
 
 Included are a sample data set that has been analyzed using the provided pipline.
 
